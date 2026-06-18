@@ -57,6 +57,8 @@ def _is_running(pid: int) -> bool:
 def _is_port_in_use(base_url: str) -> bool:
     parsed = urlparse(base_url)
     host = parsed.hostname or "localhost"
+    if host == "0.0.0.0":
+        host = "127.0.0.1"
     port = parsed.port
     if port is None:
         return False
@@ -322,9 +324,10 @@ def _resolve_backend_pid(cfg: dict, timeout: float = 8.0) -> int | None:
 
 def _wait_for_health(cfg: dict, pretty: bool) -> None:
     """轮询 /health，超时 30 秒。检测 FATAL 状态提前退出。"""
+    from miloco_cli.client import _normalize_server_url
     import httpx
 
-    health_url = cfg["server"]["url"].rstrip("/") + "/health"
+    health_url = _normalize_server_url(cfg["server"]["url"]).rstrip("/") + "/health"
     deadline = time.time() + 30
     while time.time() < deadline:
         status = _supervisorctl("status", _PROGRAM_NAME).stdout

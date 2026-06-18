@@ -8,10 +8,22 @@
 import json
 import sys
 from typing import NoReturn
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from miloco_cli.config import load_config
+
+
+def _normalize_server_url(url: str) -> str:        
+    """0.0.0.0 是服务端 bind 地址，客户端连接时应替换为 127.0.0.1。"""
+    parsed = urlparse(url)
+    if parsed.hostname == "0.0.0.0":
+        replaced = parsed._replace(
+            netloc=parsed.netloc.replace("0.0.0.0", "127.0.0.1", 1)
+        )
+        return urlunparse(replaced)
+    return url
 
 
 def _get_client(cfg: dict) -> httpx.Client:
@@ -22,7 +34,7 @@ def _get_client(cfg: dict) -> httpx.Client:
     tls = server.get("tls_verify", False)
     verify = tls if isinstance(tls, bool) else str(tls).lower() == "true"
     return httpx.Client(
-        base_url=server["url"],
+        base_url=_normalize_server_url(server["url"]),
         headers=headers,
         verify=verify,
         timeout=30,
