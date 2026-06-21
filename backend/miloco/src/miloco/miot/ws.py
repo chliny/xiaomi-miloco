@@ -648,6 +648,24 @@ class MIoTVideoStreamManager:
             )
             await self._broadcast(camera_tag, payload=header + nal_bytes)
 
+    async def re_subscribe(self, camera_id: str, channel: int) -> bool:
+        """重新注册视频流回调（用于 PPCS 恢复后）。"""
+        camera_tag = f"{camera_id}.{channel}"
+        try:
+            reg_id = await manager.miot_service.start_video_stream(
+                camera_id=camera_id,
+                channel=channel,
+                callback=self.__video_stream_callback,
+            )
+            if reg_id >= 0:
+                self._camera_reg_id[camera_tag] = reg_id
+                logger.info("Re-subscribed %s.%d reg_id=%d", camera_id, channel, reg_id)
+                return True
+            return False
+        except Exception as e:
+            logger.warning("Re-subscribe failed %s.%d: %s", camera_id, channel, e)
+            return False
+
 
 miot_video_stream_manager = MIoTVideoStreamManager()
 

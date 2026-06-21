@@ -100,46 +100,59 @@ async def _check_camera_power(camera_id: str) -> bool | None:
         return None
 
 
+async def _try_recover_ppcs(camera_id: str, channel: int) -> bool:
+    """尝试通过 stop+start camera instance 来恢复 PPCS 连接。
+
+    比 destroy+recreate 轻量:保留同一个 instance,只重启 PPCS 会话,
+    不干扰已注册的 perception 解码回调。
+    """
+    proxy = manager.miot_service._miot_proxy
+    handler = proxy._camera_img_managers.get(camera_id)
+    if handler is None:
+        return False
+    try:
+        logger.info("PPCS recovery: stop+start camera instance %s", camera_id)
+        await handler.miot_camera_instance.stop_async()
+        await handler.miot_camera_instance.start_async(enable_reconnect=True, enable_audio=True)
+        return await miot_video_stream_manager.re_subscribe(camera_id, channel)
+    except Exception as e:
+        logger.warning("PPCS recovery failed for %s: %s", camera_id, e)
+        return False
+
+
 async def _first_frame_watchdog(
     websocket: WebSocket, camera_id: str, channel: int
 ) -> None:
-    """等首帧;超时仍无帧 → 发 error 信令 + 主动关闭,让前端能明确告知住户连不上。
+    """等首帧;启动时先尝试 PPCS 恢复,再等帧;仍无帧 → 发 error 信令。
 
     被 ``video_stream_websocket`` 当后台 task 起。正常出帧时这个 task 等满
     ``_FIRST_FRAME_TIMEOUT_S`` 后发现 ``has_emitted_frame`` 为真,啥也不做退出。
     取消安全:住户在超时前主动关页 → 主流程 finally 里 cancel 本 task,
     ``CancelledError`` 直接向上抛,不吞。
     """
+    # ── 立即尝试 PPCS 恢复 ──
+    recovered = await _try_recover_ppcs(camera_id, channel)
     await asyncio.sleep(_FIRST_FRAME_TIMEOUT_S)
     if miot_video_stream_manager.has_emitted_frame(camera_id, channel):
         return
 
-    # 尝试检查摄像头电源状态,给出更精确的错误提示
+    # ── 仍无帧:报错 ──
     camera_on = await _check_camera_power(camera_id)
     if camera_on is False:
         reason = "camera_power_off"
         message = "摄像头已关闭或开启物理遮蔽"
-        logger.warning(
-            "First-frame watchdog fired, %s.%d — camera power is off",
-            camera_id, channel,
-        )
     else:
         reason = "camera_unreachable"
         message = "连不上摄像头(可能不在同一局域网,或摄像头离线)"
-        logger.warning(
-            "First-frame watchdog fired, %s.%d — no frame in %.0fs, camera likely "
-            "unreachable (cross-LAN / offline / PPCS relay not established)",
-            camera_id, channel, _FIRST_FRAME_TIMEOUT_S,
-        )
+    logger.warning(
+        "First-frame watchdog: %s.%d — no frame after reinit=%s",
+        camera_id, channel, "ok" if recovered else "skip/failed",
+    )
     try:
         # reason 是给将来按机器码分流预留的字段;前端 watch.html 当前只展示 message,
         # 不读 reason。两个都发,前端按需取。
         await websocket.send_text(
-            json.dumps({
-                "type": "error",
-                "reason": reason,
-                "message": message,
-            })
+            json.dumps({"type": "error", "reason": reason, "message": message})
         )
     except Exception as err:
         # send 失败基本意味着连接已被对端关掉——再 close 也是白搭,还会再抛一条
