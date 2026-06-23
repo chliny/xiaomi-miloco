@@ -641,7 +641,6 @@ class MIoTCameraInstance:
                 )
         elif codec_id in [
             MIoTCameraCodec.AUDIO_OPUS,
-            MIoTCameraCodec.AUDIO_PCM,
             MIoTCameraCodec.AUDIO_G711A,
             MIoTCameraCodec.AUDIO_G711U,
         ]:
