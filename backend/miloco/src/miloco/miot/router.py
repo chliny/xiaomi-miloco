@@ -95,8 +95,8 @@ async def _check_camera_power(camera_id: str) -> bool | None:
             if isinstance(value, bool):
                 return value
         return None
-    except Exception as e:
-        logger.warning("check camera power failed, %s: %s", camera_id, e)
+    except Exception:
+        logger.warning("check camera power failed")
         return None
 
 
@@ -123,8 +123,8 @@ async def _first_frame_watchdog(
         reason = "camera_unreachable"
         message = "连不上摄像头(可能不在同一局域网,或摄像头离线)"
     logger.warning(
-        "First-frame watchdog: %s.%d — no frame, power=%s",
-        camera_id, channel, camera_on,
+        "First-frame watchdog fired — no frame, power=%s",
+        camera_on,
     )
     try:
         # reason 是给将来按机器码分流预留的字段;前端 watch.html 当前只展示 message,
