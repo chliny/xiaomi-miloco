@@ -336,10 +336,6 @@ class MIoTMediaDecoder(threading.Thread):
             # Create audio decoder
             if frame_data.codec_id == MIoTCameraCodec.AUDIO_OPUS:
                 self._audio_decoder = AudioCodecContext.create("opus", "r")
-            elif frame_data.codec_id == MIoTCameraCodec.AUDIO_PCM:
-                self._audio_decoder = AudioCodecContext.create("pcm_s16le", "r")
-                self._audio_decoder.sample_rate = 8000
-                self._audio_decoder.layout = "mono"
             elif frame_data.codec_id == MIoTCameraCodec.AUDIO_G711A:
                 self._audio_decoder = AudioCodecContext.create("pcm_alaw", "r")
                 self._audio_decoder.sample_rate = 8000

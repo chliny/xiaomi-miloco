@@ -1,6 +1,6 @@
 # 维护者手动触发的 PR 审查：在 PR 评论里发 "/review" 即对该 PR 跑一次 /review-pr。
-# 用途：fork PR 拿不到 secrets，被 pr-review.yml 的同仓门控跳过；改由维护者人工过目后评论触发，
-# 在 base 仓上下文里跑（issue_comment 自带 secrets）。安全边界 = 评论者须有 write+ 权限 + 钉死触发时刻的 head SHA。
+# 用途：维护者手动对任意 PR（含 fork）跑审查；在 base 仓上下文里通过 issue_comment 触发。
+# 安全边界 = 评论者须有 write+ 权限 + 钉死触发时刻的 head SHA。
 name: PR Review (command)
 
 on:
@@ -26,13 +26,29 @@ jobs:
   authorize:
     if: >-
       github.event.issue.pull_request != null
-      && (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review '))
+      && startsWith(github.event.comment.body, '/review')
       && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     outputs:
       head_sha: ${{ steps.gate.outputs.head_sha }}
+      matched: ${{ steps.check.outputs.matched }}
     steps:
+      - name: 校验评论命令
+        id: check
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          BODY="$(printf '%s' "$COMMENT_BODY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          if [ "$BODY" = "/review" ] || printf '%s' "$BODY" | grep -q '^/review '; then
+            echo "matched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "matched=false" >> "$GITHUB_OUTPUT"
+            SAFE_BODY="$(printf '%s' "$BODY" | tr '\n' ' ')"
+            echo "::notice::跳过：评论内容不匹配 /review 命令（trim 后为: ${SAFE_BODY}）"
+          fi
+
       - name: 钉死 head SHA
+        if: steps.check.outputs.matched == 'true'
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -44,15 +60,17 @@ jobs:
           echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
       - name: 回应 👀 表示已收到
+        if: success() && steps.check.outputs.matched == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
             -f content=eyes >/dev/null 2>&1 || true
 
-  # needs: authorize —— authorize 被 if 跳过（非授权人）时本 job 也随之跳过，无需再设 if
+  # needs: authorize —— authorize 被 if 跳过（非授权人）或评论不匹配时本 job 也随之跳过
   review:
     needs: authorize
+    if: needs.authorize.outputs.matched == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -64,9 +82,12 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
       PR_AGENT_MODEL: ${{ vars.PR_AGENT_MODEL }}
+      ANTHROPIC_FALLBACK_API_KEY: ${{ secrets.ANTHROPIC_FALLBACK_API_KEY }}
+      ANTHROPIC_FALLBACK_BASE_URL: ${{ secrets.ANTHROPIC_FALLBACK_BASE_URL }}
+      PR_AGENT_FALLBACK_MODEL: ${{ vars.PR_AGENT_FALLBACK_MODEL }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           # 钉死 head SHA：refs/pull/<n>/head 在 base 仓里对 fork PR 也可拉；fetch-depth 0 供命令内 merge-base 比对
           ref: refs/pull/${{ github.event.issue.number }}/head
